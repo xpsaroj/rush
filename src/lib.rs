@@ -1,6 +1,7 @@
-use std::fs;
 use std::io::{self, Write};
+use std::path::Path;
 use std::process::{Command, Stdio};
+use std::{env, fs};
 
 pub fn run() {
     loop {
@@ -15,47 +16,61 @@ pub fn run() {
                     continue;
                 }
 
-                let parts: Vec<&str> = command_line.split_whitespace().collect();
-                if parts.is_empty() {
+                let mut parts = command_line.split_whitespace();
+                let command = parts.next().unwrap();
+                if command.is_empty() {
                     continue;
                 }
 
-                let command = parts[0];
-                if command == "exit" {
-                    break;
-                }
-
-                let mut redirect = false;
-                let mut redirect_pos = 0;
-
-                if let Some(i) = parts.iter().position(|&item| item == ">") {
-                    if i > 0 && i < parts.len() - 1 {
-                        redirect = true;
-                        redirect_pos = i;
+                match command {
+                    "exit" => break,
+                    "cd" => {
+                        // default to '/' as new dir if one was not provided
+                        let new_dir = parts.peekable().peek().map_or("/", |x| *x);
+                        let root = Path::new(new_dir);
+                        if let Err(e) = env::set_current_dir(&root) {
+                            eprintln!("{}", e);
+                        }
                     }
-                }
+                    command => {
+                        let mut redirect = false;
+                        let mut redirect_pos = 0;
 
-                if redirect {
-                    let args: Vec<String> = parts[1..redirect_pos]
-                        .iter()
-                        .map(|s| s.to_string())
-                        .collect();
-                    let output_file_path = parts[redirect_pos + 1].to_string();
+                        let parts: Vec<&str> = parts.collect();
+                        if let Some(i) = parts.iter().position(|&item| item == ">") {
+                            if i > 0 && i < parts.len() - 1 {
+                                redirect = true;
+                                redirect_pos = i;
+                            }
+                        }
 
-                    if let Err(e) = redirect_output(command, &args, &output_file_path) {
-                        eprintln!("Error redirecting output! {}", e);
-                    }
-                    continue;
-                }
+                        if redirect {
+                            // args before the > operator: echo "sth" > somefile.txt; // args = ["sth"]
+                            let args: Vec<String> = parts[0..redirect_pos]
+                                .iter()
+                                .map(|s| s.to_string())
+                                .collect();
 
-                let args: Vec<String> = parts[1..].iter().map(|s| s.to_string()).collect();
+                            // file path after > operator: output_file_path = "somefile.txt"
+                            let output_file_path = parts[redirect_pos + 1].to_string();
 
-                match Command::new(command).args(args).spawn() {
-                    Ok(mut child) => {
-                        child.wait().unwrap();
-                    }
-                    Err(e) => {
-                        eprintln!("Error executing command: {}", e);
+                            if let Err(e) = redirect_output(command, &args, &output_file_path) {
+                                eprintln!("Error redirecting output! {}", e);
+                            }
+                            continue;
+                        }
+
+                        // if no > operator: args = everything after the command
+                        let args: Vec<String> = parts[0..].iter().map(|s| s.to_string()).collect();
+
+                        match Command::new(command).args(args).spawn() {
+                            Ok(mut child) => {
+                                child.wait().unwrap();
+                            }
+                            Err(e) => {
+                                eprintln!("Error executing command: {}", e);
+                            }
+                        }
                     }
                 }
             }
